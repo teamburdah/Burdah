@@ -4,23 +4,25 @@
 jmp short start         ; Lompat ke kode start
 nop                     ; Padding untuk identifier
 
-;; El Torito Boot Record
-boot_record:
-    db 0x00                    ; Boot Record Indicator
-    db 'CD001'                ; Standard Identifier
-    db 0x01                    ; Version
-    db 'EL TORITO'            ; El Torito Identifier
-    times 32 db 0             ; Reserved
-    dd boot_catalog           ; Boot Catalog Location
+;; Konstanta ISO 9660
+SECTOR_SIZE     equ 2048
+PVD_SECTOR      equ 16        ; Primary Volume Descriptor biasanya di sector 16
+ROOT_DIR_OFFSET equ 156       ; Offset ke root directory dalam PVD
 
-;; Disk Address Packet structure
-dap:
-    db 0x10                   ; DAP size
-    db 0                      ; unused
-    .count:    dw 1           ; number of sectors to read
-    .offset:   dw 0           ; destination offset
-    .segment:  dw 0           ; destination segment
-    .lba:      dq 0           ; starting LBA
+;; Struktur Directory Record
+struc DIR_RECORD
+    .length:     resb 1
+    .ext_length: resb 1
+    .extent:     resd 1
+    .size:       resd 1
+    .date:       resb 7
+    .flags:      resb 1
+    .unit_size:  resb 1
+    .gap_size:   resb 1
+    .vol_seq:    resw 1
+    .name_len:   resb 1
+    .name:       resb 32
+endstruc
 
 start:
     ; Setup segment registers
@@ -35,30 +37,20 @@ start:
     ; Simpan drive number
     mov [drive_num], dl
 
-    ; Cek support Extended Read
-    mov ah, 0x41
-    mov bx, 0x55AA
-    mov dl, [drive_num]
-    int 0x13
-    jc no_extended_support
-
     ; Tampilkan pesan loading
     mov si, msg_loading
     call print_string
 
-    ; Load kernel
-    call load_kernel
+    ; Baca Primary Volume Descriptor
+    mov eax, PVD_SECTOR
+    mov bx, buffer
+    call read_sector
 
-    ; Jika berhasil, lompat ke kernel
-    mov dl, [drive_num]      ; Pass drive number ke kernel
-    jmp 0x1000:0x0000
+    ; Dapatkan lokasi root directory
+    mov eax, [buffer + ROOT_DIR_OFFSET]    ; Load extent location
+    mov [current_sector], eax
 
-no_extended_support:
-    mov si, msg_no_ext
-    call print_string
-    jmp $
-
-;; Fungsi-fungsi utama
+; Dapatkan memory map biar nantinya bisa mendapatkan informasi tentang RAM. (Kalau gak bisa dicompile, coba pindah baris)
 get_memory_map:
     mov di, 0x8000          ; Lokasi penyimpanan memory map
     xor ebx, ebx            ; Harus 0 untuk panggilan pertama
@@ -72,63 +64,121 @@ get_memory_map:
     ; Simpan jumlah entry di 0x7E00
     mov [0x7E00], dword eax  
 
-load_kernel:
-    ; Setup DAP untuk membaca kernel
-    mov word [dap.count], 32      ; Baca 32 sektor (64KB)
-    mov word [dap.offset], 0
-    mov word [dap.segment], 0x1000
-    mov dword [dap.lba], 20       ; Mulai dari sektor 20 (setelah boot record)
+    ; Cari SYSTEM.DAT
+    call find_system_dat
+    jc .error_no_system
 
-    ; Baca kernel menggunakan Extended Read
+    ; Load SYSTEM.DAT ke memory
+    call load_system_dat
+
+    ; Jika berhasil, lompat ke kernel
+    mov dl, [drive_num]
+    jmp 0x1000:0000
+
+.error_no_system:
+    mov si, msg_no_system
+    call print_string
+    jmp $
+
+;; Fungsi untuk membaca satu sektor
+read_sector:
+    ; eax = LBA sector to read
+    ; es:bx = buffer to read into
+    push si
+    push ax
+    push cx
+    push dx
+
+    mov [dap.lba], eax
+    mov [dap.segment], es
+    mov [dap.offset], bx
+
     mov ah, 0x42
     mov dl, [drive_num]
     mov si, dap
     int 0x13
-    jc read_error
+    
+    pop dx
+    pop cx
+    pop ax
+    pop si
     ret
 
-print_string:
-    lodsb
-    or al, al
-    jz .done
-    mov ah, 0x0E
-    int 0x10
-    jmp print_string
-.done:
+;; Fungsi untuk mencari SYSTEM.DAT
+find_system_dat:
+    mov bx, buffer
+.next_record:
+    ; Periksa apakah ini akhir direktori
+    cmp byte [bx], 0
+    je .not_found
+
+    ; Bandingkan nama file
+    mov si, system_dat_name
+    mov cx, 11              ; Panjang "SYSTEM.DAT;1"
+    mov di, bx
+    add di, DIR_RECORD.name
+    push bx
+    repe cmpsb
+    pop bx
+    je .found
+
+    ; Pindah ke record berikutnya
+    movzx ax, byte [bx]    ; Panjang record
+    add bx, ax
+    jmp .next_record
+
+.found:
+    ; Simpan lokasi dan ukuran file
+    mov eax, [bx + DIR_RECORD.extent]
+    mov [system_dat_sector], eax
+    mov eax, [bx + DIR_RECORD.size]
+    mov [system_dat_size], eax
+    clc
     ret
 
-read_error:
-    mov si, msg_disk_error
-    call print_string
-    jmp $
+.not_found:
+    stc
+    ret
+
+;; Fungsi untuk load SYSTEM.DAT
+load_system_dat:
+    mov eax, [system_dat_sector]
+    mov bx, 0
+    mov es, bx
+    mov bx, 0x10000        ; Load ke 0x1000:0000
+
+.load_loop:
+    call read_sector
+    add bx, SECTOR_SIZE
+    inc eax
+    mov ecx, [system_dat_size]
+    sub ecx, SECTOR_SIZE
+    mov [system_dat_size], ecx
+    jg .load_loop
+    ret
 
 ;; Data
-drive_num:          db 0
-msg_loading:        db 'Starting Burdah CD', 0x0D, 0x0A, 0
-msg_disk_error:     db 'Error reading disk!', 0x0D, 0x0A, 0
-msg_no_ext:         db 'Extended read not supported!', 0x0D, 0x0A, 0
+drive_num:           db 0
+current_sector:      dd 0
+system_dat_sector:   dd 0
+system_dat_size:     dd 0
+system_dat_name:     db 'SYSTEM.DAT;1'
+msg_loading:         db 'Starting Burdah...', 13, 10, 0
+msg_no_system:       db 'SYSTEM.DAT not found! Check this CD', 13, 10, 0
 
-;; Boot Catalog
-align 4
-boot_catalog:
-    ; Validation Entry
-    db 0x01                    ; Header ID
-    db 0x00                    ; Platform ID
-    dw 0x0000                 ; Reserved
-    db 'BURDAH              ' ; ID String
-    dw 0xAA55                 ; Checksum
-    db 0x55, 0xAA             ; Signature
+;; Disk Address Packet
+dap:
+    db 0x10                   ; size of DAP
+    db 0                      ; unused
+    .count:    dw 1           ; number of sectors
+    .offset:   dw 0           ; destination offset
+    .segment:  dw 0           ; destination segment
+    .lba:      dd 0           ; LBA to read
+    .lba_high: dd 0           ; high 32-bits of LBA (not used)
 
-    ; Initial/Default Entry
-    db 0x88                    ; Bootable
-    db 0x00                    ; Boot media type
-    dw 0x0000                 ; Load segment
-    db 0x00                    ; System type
-    db 0x00                    ; Unused
-    dw 0x0001                 ; Sector count
-    dd 0x00000014             ; Load RBA
-    times 20 db 0             ; Unused
+;; Buffer untuk membaca data
+buffer:
 
 ; Padding dan signature
-times 2048-($-$$) db 0        ; Pad to 2048 bytes (CD sector size)
-dw 0xAA55                     ; Boot signature
+times 2048-($-$$) db 0
+dw 0xAA55
