@@ -59,6 +59,19 @@ no_extended_support:
     jmp $
 
 ;; Fungsi-fungsi utama
+get_memory_map:
+    mov di, 0x8000          ; Lokasi penyimpanan memory map
+    xor ebx, ebx            ; Harus 0 untuk panggilan pertama
+    mov edx, 0x534D4150     ; 'SMAP' signature
+    mov eax, 0xE820         ; Fungsi BIOS
+    mov [es:di + 20], dword 1 ; Force valid ACPI 3.X entry
+    mov ecx, 24             ; Ukuran buffer untuk tiap entry
+    int 0x15               ; BIOS interrupt
+    jc .failed             ; Carry flag = error
+
+    ; Simpan jumlah entry di 0x7E00
+    mov [0x7E00], dword eax  
+
 load_kernel:
     ; Setup DAP untuk membaca kernel
     mov word [dap.count], 32      ; Baca 32 sektor (64KB)
