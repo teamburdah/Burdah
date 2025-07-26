@@ -226,7 +226,7 @@ disk_error:
     jmp $
 
 ; Variabel
-kernel_name       db "SYSTEM  DAT"
+kernel_name       db "SYSTEM.DAT"     ; Format yang benar
 msg_loading       db "starting burdah...", 0x0D, 0x0A, 0
 msg_kernel_missing db 0x0D, 0x0A, "Sorry... please check your system disk. Kernel is missing :(", 0x0D, 0x0A, 0
 msg_disk_error    db "Disk error! Replace disk :((", 0x0D, 0x0A, 0
