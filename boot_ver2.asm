@@ -1,4 +1,4 @@
- ; We use source code from MikeOS for the bootloader as backup code. We don't know why, because the main code has a bug that prevents it from reading the kernel file.
+; We use source code from MikeOS for the bootloader as backup code. We don't know why, because the main code has a bug that prevents it from reading the kernel file.
 ; ==========≈============================
 ; WE DECLARE THAT:
 ; Based on code from MikeOS - Copyright (c) 2014 MikeOS Developers
@@ -326,10 +326,10 @@ l2hts:                        ; Calculate head, track and sector settings for in
 ; ------------------------------------------------------------------
 ; STRINGS AND VARIABLES
 
-        kern_filename        db "PORTAL  DAT"        ; MikeOS kernel filename
+        kern_filename        db "SYSTEM  DAT"        ; MikeOS kernel filename
 
         disk_error        db "Floppy error! Press any key...", 0
-        file_not_found        db "PORTAL.DAT not found!", 0
+        file_not_found        db "SYSTEM.DAT not found!", 0
 
         bootdev                db 0         ; Boot device number
         cluster                dw 0         ; Cluster of the file we want to load
